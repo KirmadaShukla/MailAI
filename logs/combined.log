@@ -1,0 +1,7 @@
+{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-24T14:15:50.216Z"}
+{"level":"info","message":"GET /api/stats/stats - ::1","service":"maily-parallel-api","timestamp":"2025-05-24T14:15:52.555Z"}
+{"level":"info","message":"GET /api/stats/ - ::1","service":"maily-parallel-api","timestamp":"2025-05-24T14:15:58.180Z"}
+{"level":"info","message":"POST /api/stop/ - ::1","service":"maily-parallel-api","timestamp":"2025-05-24T14:16:37.473Z"}
+{"level":"info","message":"POST /api/process - ::1","service":"maily-parallel-api","timestamp":"2025-05-24T14:16:57.380Z"}
+{"level":"info","message":"POST /api/stop/ - ::1","service":"maily-parallel-api","timestamp":"2025-05-24T14:17:19.039Z"}
+{"level":"info","message":"POST /api/stop/ - ::1","service":"maily-parallel-api","timestamp":"2025-05-24T14:17:34.253Z"}
