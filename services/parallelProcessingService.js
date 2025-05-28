@@ -2,22 +2,26 @@ const { applyLabel, getAllLabels } = require('./gmailService');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const config = require('../config/config');
 const { google } = require('googleapis');
+const { RateLimiter } = require('limiter');
 
-// Initialize Gemini with the latest and most advanced model
+// Initialize global rate limiter (200 API calls per second, fast processing)
+const apiLimiter = new RateLimiter({ tokensPerInterval: 200, interval: 'second' });
+
+// Initialize Gemini with the latest model
 const genAI = new GoogleGenerativeAI(config.gemini.apiKey);
 const model = genAI.getGenerativeModel({
-  model: 'gemini-2.0-flash-exp',  // Latest Gemini 2.0 Flash - most advanced model available
+  model: 'gemini-2.0-flash-exp', // Latest Gemini 2.0 Flash
   generationConfig: {
-    temperature: 0.03,  // Very low temperature for maximum consistency
+    temperature: 0.03, // Low temperature for consistency
     topP: 0.95,
     topK: 15,
     maxOutputTokens: 8192,
-  }
+  },
 });
 
 const predefinedCategories = [
   'Meetings', 'Promotions', 'Important', 'Social', 'Travel', 'Work',
-  'Transactions', 'Personal', 'Finance', 'Shopping', 'News', 'Updates'
+  'Transactions', 'Personal', 'Finance', 'Shopping', 'News', 'Updates',
 ];
 
 // Global processing status
@@ -29,8 +33,14 @@ let processingStatus = {
   startTime: null,
   currentBatch: 0,
   totalBatches: 0,
+  completedBatches: 0,
+  progressPercentage: 0,
   categories: {},
-  logs: []
+  logs: [],
+  retryAttempts: 0,
+  maxRetryAttempts: 3,
+  failedBatches: [],
+  retryingBatches: false,
 };
 
 // Helper function to add logs
@@ -46,7 +56,38 @@ function addLog(message) {
   }
 }
 
-// Batch categorize multiple emails with Gemini 2.0 advanced accuracy
+// Helper function to update progress
+function updateProgress() {
+  if (processingStatus.totalBatches > 0) {
+    const percentage = Math.round((processingStatus.completedBatches / processingStatus.totalBatches) * 100);
+    processingStatus.progressPercentage = percentage;
+
+    const elapsed = Math.round((Date.now() - processingStatus.startTime) / 1000);
+    const rate = elapsed > 0 ? Math.round(processingStatus.processedEmails / elapsed * 60) : 0;
+
+    addLog(`📊 PROGRESS: ${percentage}% (${processingStatus.completedBatches}/${processingStatus.totalBatches} batches) | ${processingStatus.processedEmails} emails processed | ${rate} emails/min`);
+  }
+}
+
+// Helper function for fast processing with minimal backoff
+async function withBackoff(fn, maxRetries = 3, baseDelay = 500) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      await apiLimiter.removeTokens(1); // Consume one token per API call
+      return await fn();
+    } catch (error) {
+      if (error.code === 429 && attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt); // Fast exponential backoff
+        addLog(`⚠️ Rate limit hit, quick retry after ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+// Batch categorize multiple emails with Gemini 2.0
 async function batchCategorizeEmails(emailBatch, batchNumber) {
   let batchPrompt = `You are an advanced Gemini 2.0 email categorization AI with exceptional accuracy and understanding. Analyze each email with deep contextual comprehension and categorize it into EXACTLY ONE category from the list below.
 
@@ -106,7 +147,7 @@ Use ONLY these exact category names: ${predefinedCategories.join(', ')}
 CATEGORIES:`;
 
   try {
-    addLog(`� Batch ${batchNumber}: Sending ${emailBatch.length} emails to Gemini 2.0 Flash...`);
+    addLog(`📡 Batch ${batchNumber}: Sending ${emailBatch.length} emails to Gemini 2.0 Flash...`);
     const result = await model.generateContent(batchPrompt);
     const response = result.response.text().trim();
 
@@ -117,14 +158,9 @@ CATEGORIES:`;
       .map(line => line.replace(/^\d+\.\s*/, '').replace(/^-\s*/, '').trim())
       .slice(0, emailBatch.length);
 
-    // addLog(`✅ Batch ${batchNumber}: Received ${categories.length} categorizations`);
-
-    // Validate and clean categories with better fallback logic
+    // Validate and clean categories
     const validatedCategories = categories.map((category, index) => {
-      // Clean the category response
       const cleanCategory = category.replace(/[^\w\s]/g, '').trim();
-
-      // Find exact match first
       const exactMatch = predefinedCategories.find(cat =>
         cat.toLowerCase() === cleanCategory.toLowerCase()
       );
@@ -133,7 +169,6 @@ CATEGORIES:`;
         return exactMatch;
       }
 
-      // Find partial match
       const partialMatch = predefinedCategories.find(cat =>
         cat.toLowerCase().includes(cleanCategory.toLowerCase()) ||
         cleanCategory.toLowerCase().includes(cat.toLowerCase())
@@ -144,12 +179,11 @@ CATEGORIES:`;
         return partialMatch;
       }
 
-      // Intelligent fallback based on email content
+      // Fallback logic based on content
       const email = emailBatch[index];
       const subject = (email.subject || '').toLowerCase();
       const snippet = (email.snippet || '').toLowerCase();
 
-      // Smart fallback logic
       if (subject.includes('meeting') || subject.includes('calendar') || snippet.includes('meeting')) {
         addLog(`📝 Batch ${batchNumber}: Auto-categorized email ${index + 1} as "Meetings" based on content`);
         return 'Meetings';
@@ -175,11 +209,11 @@ CATEGORIES:`;
   }
 }
 
-// Get emails efficiently with rate limiting
+// Get emails with fast processing
 async function batchGetEmails(gmail, emailIds, batchNumber) {
   addLog(`📦 Batch ${batchNumber}: Fetching ${emailIds.length} emails...`);
 
-  const CONCURRENT_LIMIT = 8; // Reduced for rate limiting
+  const CONCURRENT_LIMIT = 10; // High concurrency for speed
   const emails = [];
 
   for (let i = 0; i < emailIds.length; i += CONCURRENT_LIMIT) {
@@ -187,53 +221,32 @@ async function batchGetEmails(gmail, emailIds, batchNumber) {
 
     const promises = batch.map(async (emailId, index) => {
       try {
-        // Stagger requests to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, index * 50));
-
-        const response = await gmail.users.messages.get({
-          userId: 'me',
-          id: emailId,
-          format: 'metadata',
-          metadataHeaders: ['Subject']
-        });
+        await new Promise(resolve => setTimeout(resolve, index * 50)); // Minimal stagger
+        const response = await withBackoff(() =>
+          gmail.users.messages.get({
+            userId: 'me',
+            id: emailId,
+            format: 'metadata',
+            metadataHeaders: ['Subject'],
+          })
+        );
 
         return {
           id: response.data.id,
           subject: response.data.payload.headers.find(h => h.name === 'Subject')?.value || 'No Subject',
-          snippet: response.data.snippet || ''
+          snippet: response.data.snippet || '',
         };
       } catch (error) {
-        if (error.code === 429) {
-          addLog(`⚠️ Rate limit hit for email ${emailId}, retrying...`);
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          try {
-            const response = await gmail.users.messages.get({
-              userId: 'me',
-              id: emailId,
-              format: 'metadata',
-              metadataHeaders: ['Subject']
-            });
-            return {
-              id: response.data.id,
-              subject: response.data.payload.headers.find(h => h.name === 'Subject')?.value || 'No Subject',
-              snippet: response.data.snippet || ''
-            };
-          } catch (retryError) {
-            addLog(`❌ Failed to fetch email ${emailId} after retry`);
-            return null;
-          }
-        }
+        addLog(`❌ Batch ${batchNumber}: Failed to fetch email ${emailId}: ${error.message}`);
         return null;
       }
     });
 
     const batchResults = await Promise.all(promises);
-    const validEmails = batchResults.filter(email => email !== null);
-    emails.push(...validEmails);
+    emails.push(...batchResults.filter(email => email !== null));
 
-    // Rate limiting delay between batches
     if (i + CONCURRENT_LIMIT < emailIds.length) {
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 100)); // Minimal delay
     }
   }
 
@@ -241,75 +254,150 @@ async function batchGetEmails(gmail, emailIds, batchNumber) {
   return emails;
 }
 
-// Apply labels in controlled batches with rate limiting
-async function batchApplyLabels(emailCategoryPairs, batchNumber) {
-
-  const LABEL_BATCH_SIZE = 5; // Reduced to avoid rate limits
+// Apply labels with fast processing and detailed failure tracking
+async function batchApplyLabels(emailCategoryPairs, batchNumber, gmail) {
+  const LABEL_BATCH_SIZE = 10; // High batch size for speed
   let successful = 0;
   let failed = 0;
+  const failedEmails = [];
 
   for (let i = 0; i < emailCategoryPairs.length; i += LABEL_BATCH_SIZE) {
     const batch = emailCategoryPairs.slice(i, i + LABEL_BATCH_SIZE);
 
     const promises = batch.map(async ({ emailId, category }, index) => {
       try {
-        // Stagger label applications to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, index * 200));
+        await new Promise(resolve => setTimeout(resolve, index * 25)); // Minimal stagger
+        await withBackoff(() => applyLabel(emailId, category, gmail));
 
-        await applyLabel(emailId, category);
-
-        // Update category count
-        if (!processingStatus.categories[category]) {
-          processingStatus.categories[category] = 0;
-        }
-        processingStatus.categories[category]++;
-
+        processingStatus.categories[category] = (processingStatus.categories[category] || 0) + 1;
         return { success: true, emailId, category };
       } catch (error) {
-        if (error.message && error.message.includes('429')) {
-          addLog(`⚠️ Rate limit hit applying label to ${emailId}, retrying...`);
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          try {
-            await applyLabel(emailId, category);
-            if (!processingStatus.categories[category]) {
-              processingStatus.categories[category] = 0;
-            }
-            processingStatus.categories[category]++;
-            return { success: true, emailId, category };
-          } catch (retryError) {
-            addLog(`❌ Failed to apply label to ${emailId} after retry: ${retryError.message}`);
-            return { success: false, error: retryError.message, emailId };
-          }
-        }
-        addLog(`❌ Error applying label to ${emailId}: ${error.message}`);
-        return { success: false, error: error.message, emailId };
+        addLog(`❌ Batch ${batchNumber}: Failed to apply label "${category}" to ${emailId}: ${error.message}`);
+        return { success: false, error: error.message, emailId, category };
       }
     });
 
     const results = await Promise.all(promises);
+    successful += results.filter(r => r.success).length;
+    failed += results.filter(r => !r.success).length;
 
-    const batchSuccessful = results.filter(r => r.success).length;
-    const batchFailed = results.filter(r => !r.success).length;
+    // Track failed emails for retry
+    failedEmails.push(...results.filter(r => !r.success));
 
-    successful += batchSuccessful;
-    failed += batchFailed;
+    processingStatus.processedEmails += results.filter(r => r.success).length;
+    processingStatus.errors += results.filter(r => !r.success).length;
 
-    // Update global status
-    processingStatus.processedEmails += batchSuccessful;
-    processingStatus.errors += batchFailed;
-
-    // Rate limiting delay between label batches
     if (i + LABEL_BATCH_SIZE < emailCategoryPairs.length) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 50)); // Minimal delay
     }
   }
 
   addLog(`✅ Batch ${batchNumber}: Applied ${successful} labels (${failed} failed)`);
-  return { successful, failed };
+  return { successful, failed, failedEmails };
+}
+
+// Retry failed batches with exponential backoff
+async function retryFailedBatches(gmail) {
+  if (processingStatus.failedBatches.length === 0) {
+    addLog('✅ No failed batches to retry');
+    return;
+  }
+
+  processingStatus.retryingBatches = true;
+  processingStatus.retryAttempts++;
+
+  const retryDelay = Math.min(1000 * Math.pow(2, processingStatus.retryAttempts - 1), 30000); // Max 30 seconds
+  addLog(`🔄 RETRY ATTEMPT ${processingStatus.retryAttempts}/${processingStatus.maxRetryAttempts}: Retrying ${processingStatus.failedBatches.length} failed batches after ${retryDelay}ms delay...`);
+
+  await new Promise(resolve => setTimeout(resolve, retryDelay));
+
+  const batchesToRetry = [...processingStatus.failedBatches];
+  processingStatus.failedBatches = []; // Clear failed batches for this retry attempt
+
+  let retrySuccessful = 0;
+  let retryFailed = 0;
+  const stillFailedBatches = [];
+
+  // Process retry batches with same parallel approach
+  const retryPromises = batchesToRetry.map(async (failedBatch) => {
+    const { batchNumber, batchIds, originalError } = failedBatch;
+
+    try {
+      addLog(`🔄 Retry Batch ${batchNumber}: Attempting to process ${batchIds.length} emails...`);
+
+      // Get emails first
+      const emails = await batchGetEmails(gmail, batchIds, `${batchNumber}-retry-${processingStatus.retryAttempts}`);
+
+      // Send to Gemini
+      const categories = await batchCategorizeEmails(emails, `${batchNumber}-retry-${processingStatus.retryAttempts}`);
+
+      const emailCategoryPairs = emails.map((email, idx) => ({
+        emailId: email.id,
+        category: categories[idx] || 'Personal',
+      }));
+
+      const { successful, failed, failedEmails } = await batchApplyLabels(emailCategoryPairs, `${batchNumber}-retry-${processingStatus.retryAttempts}`, gmail);
+
+      retrySuccessful += successful;
+      retryFailed += failed;
+
+      // If there are still failures in this batch, track them for next retry
+      if (failed > 0 && processingStatus.retryAttempts < processingStatus.maxRetryAttempts) {
+        stillFailedBatches.push({
+          batchNumber: `${batchNumber}-retry-${processingStatus.retryAttempts}`,
+          batchIds: failedEmails.map(f => f.emailId),
+          originalError: `Retry ${processingStatus.retryAttempts} partial failure: ${failed} emails failed`,
+          failedEmails: failedEmails
+        });
+      }
+
+      addLog(`✅ Retry Batch ${batchNumber}: ${successful} successful, ${failed} failed`);
+      return { success: true, batchNumber, successful, failed };
+
+    } catch (error) {
+      addLog(`❌ Retry Batch ${batchNumber}: Still failing: ${error.message}`);
+      retryFailed += batchIds.length;
+
+      // Track for next retry if we haven't exceeded max attempts
+      if (processingStatus.retryAttempts < processingStatus.maxRetryAttempts) {
+        stillFailedBatches.push({
+          batchNumber: `${batchNumber}-retry-${processingStatus.retryAttempts}`,
+          batchIds: batchIds,
+          originalError: error.message,
+          failedEmails: []
+        });
+      }
+
+      return { success: false, batchNumber, error: error.message };
+    }
+  });
+
+  // Wait for all retry attempts to complete
+  const retryResults = await Promise.allSettled(retryPromises);
+
+  // Update failed batches for next retry attempt
+  processingStatus.failedBatches = stillFailedBatches;
+
+  addLog(`🔄 Retry attempt ${processingStatus.retryAttempts} completed: ${retrySuccessful} successful, ${retryFailed} failed`);
+
+  // If we still have failures and haven't exceeded max retries, schedule another retry
+  if (processingStatus.failedBatches.length > 0 && processingStatus.retryAttempts < processingStatus.maxRetryAttempts) {
+    addLog(`⏳ ${processingStatus.failedBatches.length} batches still failing, will retry again...`);
+    await retryFailedBatches(gmail);
+  } else if (processingStatus.failedBatches.length > 0) {
+    addLog(`❌ FINAL FAILURE: ${processingStatus.failedBatches.length} batches failed after ${processingStatus.maxRetryAttempts} retry attempts`);
+    processingStatus.failedBatches.forEach(batch => {
+      addLog(`❌ Permanently failed batch ${batch.batchNumber}: ${batch.batchIds.length} emails - ${batch.originalError}`);
+    });
+  } else {
+    addLog(`🎉 ALL RETRY ATTEMPTS SUCCESSFUL! No more failed batches.`);
+  }
+
+  processingStatus.retryingBatches = false;
 }
 
 // Main processing function
-async function processEmailsParallel() {
+async function processEmailsParallel(userAuth = null) {
   try {
     processingStatus.isProcessing = true;
     processingStatus.startTime = Date.now();
@@ -318,35 +406,53 @@ async function processEmailsParallel() {
     processingStatus.processedEmails = 0;
     processingStatus.errors = 0;
     processingStatus.currentBatch = 0;
+    processingStatus.completedBatches = 0;
+    processingStatus.progressPercentage = 0;
+    processingStatus.retryAttempts = 0;
+    processingStatus.failedBatches = [];
+    processingStatus.retryingBatches = false;
 
     addLog('🚀 Starting ULTIMATE PARALLEL email processing...');
 
-    // Setup Gmail client
+    // Setup Gmail client with user authentication
     const oauth2Client = new google.auth.OAuth2(
       config.gmail.clientId,
       config.gmail.clientSecret,
       config.gmail.redirectUri
     );
-    oauth2Client.setCredentials({ refresh_token: config.gmail.refreshToken });
+
+    if (userAuth && userAuth.accessToken && userAuth.refreshToken) {
+      // Use user-specific tokens
+      oauth2Client.setCredentials({
+        access_token: userAuth.accessToken,
+        refresh_token: userAuth.refreshToken,
+      });
+    } else {
+      // Fallback to global refresh token (for backward compatibility)
+      oauth2Client.setCredentials({ refresh_token: config.gmail.refreshToken });
+    }
+
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
     // Get already processed emails
     addLog('📊 Finding already processed emails...');
-    const currentLabels = await getAllLabels();
+    const currentLabels = await getAllLabels(gmail, 'parallel-processing');
     const mailyLabels = currentLabels.filter(label => label.name.startsWith('Maily/'));
 
     const processedEmailIds = new Set();
     for (const label of mailyLabels) {
       try {
-        const response = await gmail.users.messages.list({
-          userId: 'me',
-          labelIds: [label.id],
-          maxResults: 500
-        });
+        const response = await withBackoff(() =>
+          gmail.users.messages.list({
+            userId: 'me',
+            labelIds: [label.id],
+            maxResults: 500,
+          })
+        );
         const messages = response.data.messages || [];
         messages.forEach(msg => processedEmailIds.add(msg.id));
       } catch (error) {
-        // Continue silently
+        addLog(`⚠️ Failed to fetch messages for label ${label.name}: ${error.message}`);
       }
     }
 
@@ -358,21 +464,21 @@ async function processEmailsParallel() {
     let pageToken = null;
 
     do {
-      const response = await gmail.users.messages.list({
-        userId: 'me',
-        maxResults: 500,
-        pageToken: pageToken
-      });
+      const response = await withBackoff(() =>
+        gmail.users.messages.list({
+          userId: 'me',
+          maxResults: 500,
+          pageToken: pageToken,
+        })
+      );
 
       const messages = response.data.messages || [];
       allEmailIds = allEmailIds.concat(messages.map(msg => msg.id));
       pageToken = response.data.nextPageToken;
-
     } while (pageToken);
 
     // Filter unprocessed email IDs
     const unprocessedEmailIds = allEmailIds.filter(id => !processedEmailIds.has(id));
-
     processingStatus.totalEmails = unprocessedEmailIds.length;
 
     addLog(`📊 Total emails: ${allEmailIds.length}`);
@@ -385,8 +491,8 @@ async function processEmailsParallel() {
       return;
     }
 
-    // Create batches for rate-limited processing
-    const BATCH_SIZE = 200; // Reduced batch size to avoid rate limits
+    // Create batches
+    const BATCH_SIZE = 200; // Large batch size for maximum speed
     const batches = [];
 
     for (let i = 0; i < unprocessedEmailIds.length; i += BATCH_SIZE) {
@@ -395,62 +501,111 @@ async function processEmailsParallel() {
     }
 
     processingStatus.totalBatches = batches.length;
-
     addLog(`📦 Created ${batches.length} batches of ~${BATCH_SIZE} emails each`);
-    addLog(`⚡ Processing batches with rate limiting to avoid API limits...`);
 
-    // Process batches with controlled concurrency (max 2 at a time)
-    const MAX_CONCURRENT_BATCHES = 2;
-    const batchResults = [];
+    // ULTIMATE FIRE-AND-FORGET: Send ALL batches to Gemini immediately, apply labels as responses arrive
+    addLog(`🚀 ULTIMATE FIRE-AND-FORGET: Sending ALL ${batches.length} batches to Gemini immediately!`);
 
-    for (let i = 0; i < batches.length; i += MAX_CONCURRENT_BATCHES) {
-      const currentBatches = batches.slice(i, i + MAX_CONCURRENT_BATCHES);
+    let completedBatches = 0;
+    const totalBatches = batches.length;
 
-      const batchPromises = currentBatches.map(async (batchIds, localIndex) => {
-        const batchNumber = i + localIndex + 1;
+    // Start all batches immediately - no waiting, no sequential processing
+    const allBatchPromises = batches.map(async (batchIds, index) => {
+      const batchNumber = index + 1;
 
-        try {
-          addLog(`🚀 Starting batch ${batchNumber}/${batches.length}`);
+      try {
+        addLog(`📤 Batch ${batchNumber}/${totalBatches}: Fetching emails...`);
 
-          const emails = await batchGetEmails(gmail, batchIds, batchNumber);
-          const categories = await batchCategorizeEmails(emails, batchNumber);
+        // Get emails first
+        const emails = await batchGetEmails(gmail, batchIds, batchNumber);
 
-          const emailCategoryPairs = emails.map((email, index) => ({
-            emailId: email.id,
-            category: categories[index] || 'Personal'
-          }));
+        addLog(`🧠 Batch ${batchNumber}: Sending ${emails.length} emails to Gemini...`);
 
-          const { successful, failed } = await batchApplyLabels(emailCategoryPairs, batchNumber);
+        // Send to Gemini and process response immediately when it arrives
+        const categories = await batchCategorizeEmails(emails, batchNumber);
+        addLog(`✅ Batch ${batchNumber}: Got Gemini response! Applying labels immediately...`);
 
-          processingStatus.currentBatch = Math.max(processingStatus.currentBatch, batchNumber);
+        const emailCategoryPairs = emails.map((email, idx) => ({
+          emailId: email.id,
+          category: categories[idx] || 'Personal',
+        }));
 
-          return { batchNumber, successful, failed, total: emails.length };
+        const { successful, failed, failedEmails } = await batchApplyLabels(emailCategoryPairs, batchNumber, gmail);
 
-        } catch (batchError) {
-          addLog(`❌ Batch ${batchNumber} failed: ${batchError.message}`);
-          return { batchNumber, successful: 0, failed: batchIds.length, total: batchIds.length };
+        // Track failed emails for retry if any
+        if (failed > 0) {
+          processingStatus.failedBatches.push({
+            batchNumber: batchNumber,
+            batchIds: failedEmails.map(f => f.emailId),
+            originalError: `Initial processing failure: ${failed} emails failed`,
+            failedEmails: failedEmails
+          });
         }
-      });
 
-      const currentResults = await Promise.all(batchPromises);
-      batchResults.push(...currentResults);
+        // Update progress tracking
+        completedBatches++;
+        processingStatus.completedBatches = completedBatches;
+        processingStatus.currentBatch = Math.max(processingStatus.currentBatch, batchNumber);
 
-      // Delay between batch groups to respect rate limits
-      if (i + MAX_CONCURRENT_BATCHES < batches.length) {
-        addLog(`⏳ Waiting before next batch group to respect rate limits...`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Update progress percentage and show progress
+        updateProgress();
+
+        return { batchNumber, successful, failed, total: emails.length, status: 'fulfilled' };
+
+      } catch (batchError) {
+        addLog(`❌ Batch ${batchNumber}: Failed: ${batchError.message}`);
+
+        // Track completely failed batch for retry
+        processingStatus.failedBatches.push({
+          batchNumber: batchNumber,
+          batchIds: batchIds,
+          originalError: batchError.message,
+          failedEmails: []
+        });
+
+        return { batchNumber, successful: 0, failed: batchIds.length, total: batchIds.length, status: 'rejected', error: batchError.message };
       }
+    });
+
+    addLog(`🔥 All ${batches.length} batches sent! Processing responses as they arrive with retry logic...`);
+
+    // Wait for all batches to complete (but they process independently)
+    const allResults = await Promise.allSettled(allBatchPromises);
+
+    // Process final results
+    allResults.forEach((result, index) => {
+      const batchNumber = index + 1;
+      if (result.status === 'fulfilled') {
+        const { successful, failed, total } = result.value;
+        addLog(`✅ Batch ${batchNumber} completed: ${successful} successful, ${failed} failed, ${total} total`);
+      } else {
+        addLog(`❌ Batch ${batchNumber} failed completely: ${result.reason}`);
+        processingStatus.errors += batches[index].length;
+      }
+    });
+
+    // RETRY LOGIC: Process any failed batches
+    if (processingStatus.failedBatches.length > 0) {
+      addLog(`🔄 STARTING RETRY PHASE: ${processingStatus.failedBatches.length} batches need retry...`);
+      await retryFailedBatches(gmail);
+    } else {
+      addLog(`🎉 NO RETRIES NEEDED: All batches processed successfully on first attempt!`);
     }
 
     // Final results
     const totalTime = Math.round((Date.now() - processingStatus.startTime) / 1000);
     const avgRate = totalTime > 0 ? Math.round(processingStatus.processedEmails / totalTime * 60) : 0;
 
-    addLog('🎉 ULTIMATE PARALLEL PROCESSING COMPLETE!');
+    // Final progress update
+    processingStatus.progressPercentage = 100;
+    addLog(`🎉 100% COMPLETE! ULTIMATE PARALLEL PROCESSING WITH RETRY LOGIC FINISHED!`);
     addLog(`✅ Successfully processed: ${processingStatus.processedEmails} emails`);
-    addLog(`❌ Errors: ${processingStatus.errors} emails`);
+    addLog(`❌ Final errors: ${processingStatus.errors} emails`);
+    addLog(`🔄 Retry attempts made: ${processingStatus.retryAttempts}/${processingStatus.maxRetryAttempts}`);
+    addLog(`📦 Failed batches remaining: ${processingStatus.failedBatches.length}`);
     addLog(`⏱️ Total time: ${Math.floor(totalTime / 60)}m ${totalTime % 60}s`);
     addLog(`🚀 Average rate: ${avgRate} emails/minute`);
+    addLog(`📊 Category distribution: ${JSON.stringify(processingStatus.categories)}`);
 
     processingStatus.isProcessing = false;
 
@@ -476,8 +631,14 @@ function resetProcessingStatus() {
     startTime: null,
     currentBatch: 0,
     totalBatches: 0,
+    completedBatches: 0,
+    progressPercentage: 0,
     categories: {},
-    logs: []
+    logs: [],
+    retryAttempts: 0,
+    maxRetryAttempts: 3,
+    failedBatches: [],
+    retryingBatches: false,
   };
 }
 
@@ -485,5 +646,5 @@ module.exports = {
   processEmailsParallel,
   getProcessingStatus,
   resetProcessingStatus,
-  addLog
+  addLog,
 };

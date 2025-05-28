@@ -1,27 +1,28 @@
 const express = require('express');
 const router = express.Router();
-const { 
-  processEmailsParallel, 
-  getProcessingStatus, 
+const {
+  processEmailsParallel,
+  getProcessingStatus,
   resetProcessingStatus,
-  addLog 
+  addLog
 } = require('../services/parallelProcessingService');
 const { getAllLabels } = require('../services/gmailService');
+const authMiddleware = require('../middleware/auth');
 
 // GET /api/status - Get current processing status
-router.get('/status', (req, res) => {
+router.get('/status', authMiddleware, (req, res) => {
   try {
     const processingStatus = getProcessingStatus();
     const currentTime = Date.now();
-    const elapsedTime = processingStatus.startTime ? 
+    const elapsedTime = processingStatus.startTime ?
       Math.round((currentTime - processingStatus.startTime) / 1000) : 0;
-    
-    const progress = processingStatus.totalEmails > 0 ? 
+
+    const progress = processingStatus.totalEmails > 0 ?
       Math.round((processingStatus.processedEmails / processingStatus.totalEmails) * 100) : 0;
-    
-    const rate = elapsedTime > 0 ? 
+
+    const rate = elapsedTime > 0 ?
       Math.round(processingStatus.processedEmails / elapsedTime * 60) : 0;
-    
+
     res.json({
       success: true,
       data: {
@@ -37,7 +38,7 @@ router.get('/status', (req, res) => {
         timing: {
           startTime: processingStatus.startTime,
           elapsedSeconds: elapsedTime,
-          estimatedRemainingSeconds: rate > 0 ? 
+          estimatedRemainingSeconds: rate > 0 ?
             Math.round((processingStatus.totalEmails - processingStatus.processedEmails) / (rate / 60)) : null,
           emailsPerMinute: rate
         },
@@ -54,10 +55,26 @@ router.get('/status', (req, res) => {
 });
 
 // POST /api/process - Start email processing
-router.post('/process', async (req, res) => {
+router.post('/process', authMiddleware, async (req, res) => {
   try {
     const processingStatus = getProcessingStatus();
-    
+    const {userId} = req.body;
+console.log("reqboyddd:",req.body)
+    // Get user from database to access tokens
+    const User = require('../models/User');
+    const user = await User.findOne({ userId });
+    if (!user || !user.gmailTokens) {
+      return res.status(401).json({
+        success: false,
+        error: 'User authentication not found'
+      });
+    }
+
+    const userAuth = {
+      accessToken: user.gmailTokens.accessToken,
+      refreshToken: user.getDecryptedRefreshToken()
+    };
+
     if (processingStatus.isProcessing) {
       return res.status(400).json({
         success: false,
@@ -72,10 +89,10 @@ router.post('/process', async (req, res) => {
 
     // Reset status before starting
     resetProcessingStatus();
-    addLog('🎯 API request received to start parallel processing');
+    addLog(`🎯 API request received to start parallel processing for user: ${userId}`);
 
-    // Start processing in background
-    processEmailsParallel().catch(error => {
+    // Start processing in background with user authentication
+    processEmailsParallel(userAuth).catch(error => {
       addLog(`❌ Processing failed: ${error.message}`);
       const status = getProcessingStatus();
       status.isProcessing = false;
@@ -104,17 +121,17 @@ router.post('/process', async (req, res) => {
 });
 
 // GET /api/logs - Get all processing logs
-router.get('/logs', (req, res) => {
+router.get('/logs', authMiddleware, (req, res) => {
   try {
     const processingStatus = getProcessingStatus();
-    
+
     res.json({
       success: true,
       data: {
         logs: processingStatus.logs,
         totalLogs: processingStatus.logs.length,
         isProcessing: processingStatus.isProcessing,
-        lastUpdate: processingStatus.logs.length > 0 ? 
+        lastUpdate: processingStatus.logs.length > 0 ?
           processingStatus.logs[processingStatus.logs.length - 1] : null
       }
     });
@@ -127,15 +144,29 @@ router.get('/logs', (req, res) => {
 });
 
 // GET /api/labels - Get current Gmail labels
-router.get('/labels', async (req, res) => {
+router.get('/labels', authMiddleware, async (req, res) => {
   try {
-    const labels = await getAllLabels();
+    // Get user from database to access tokens
+    const User = require('../models/User');
+    const user = await User.findOne({ userId: req.userId });
+    if (!user || !user.gmailTokens) {
+      return res.status(401).json({
+        success: false,
+        error: 'User authentication not found'
+      });
+    }
+
+    const userAuth = {
+      accessToken: user.gmailTokens.accessToken,
+      refreshToken: user.getDecryptedRefreshToken()
+    };
+    const labels = await getAllLabels(req);
     const mailyLabels = labels.filter(label => label.name.startsWith('Maily/'));
-    
+
     // Calculate total emails organized
-    const totalOrganized = mailyLabels.reduce((sum, label) => 
+    const totalOrganized = mailyLabels.reduce((sum, label) =>
       sum + (label.messagesTotal || 0), 0);
-    
+
     res.json({
       success: true,
       data: {
@@ -162,10 +193,10 @@ router.get('/labels', async (req, res) => {
 });
 
 // POST /api/stop - Stop current processing (if needed)
-router.post('/stop', (req, res) => {
+router.post('/stop', authMiddleware, (req, res) => {
   try {
     const processingStatus = getProcessingStatus();
-    
+
     if (!processingStatus.isProcessing) {
       return res.status(400).json({
         success: false,
@@ -196,19 +227,30 @@ router.post('/stop', (req, res) => {
 });
 
 // GET /api/stats - Get processing statistics
-router.get('/stats', async (req, res) => {
+router.get('/stats', authMiddleware, async (req, res) => {
   try {
     const processingStatus = getProcessingStatus();
-    const labels = await getAllLabels();
+
+    // Get user from database to access tokens
+    const User = require('../models/User');
+    const user = await User.findOne({ userId: req.userId });
+    if (!user || !user.gmailTokens) {
+      return res.status(401).json({
+        success: false,
+        error: 'User authentication not found'
+      });
+    }
+
+    const labels = await getAllLabels(req);
     const mailyLabels = labels.filter(label => label.name.startsWith('Maily/'));
-    
-    const totalOrganized = mailyLabels.reduce((sum, label) => 
+
+    const totalOrganized = mailyLabels.reduce((sum, label) =>
       sum + (label.messagesTotal || 0), 0);
-    
+
     const categoryStats = mailyLabels.map(label => ({
       category: label.name.replace('Maily/', ''),
       count: label.messagesTotal || 0,
-      percentage: totalOrganized > 0 ? 
+      percentage: totalOrganized > 0 ?
         Math.round(((label.messagesTotal || 0) / totalOrganized) * 100) : 0
     })).sort((a, b) => b.count - a.count);
 
@@ -230,9 +272,9 @@ router.get('/stats', async (req, res) => {
         },
         performance: {
           startTime: processingStatus.startTime,
-          elapsedSeconds: processingStatus.startTime ? 
+          elapsedSeconds: processingStatus.startTime ?
             Math.round((Date.now() - processingStatus.startTime) / 1000) : 0,
-          emailsPerMinute: processingStatus.startTime && processingStatus.processedEmails > 0 ? 
+          emailsPerMinute: processingStatus.startTime && processingStatus.processedEmails > 0 ?
             Math.round(processingStatus.processedEmails / ((Date.now() - processingStatus.startTime) / 1000) * 60) : 0
         }
       }

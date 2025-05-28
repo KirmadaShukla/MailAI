@@ -1,36 +1,33 @@
+// services/gmail.js
+
 const { google } = require('googleapis');
-const config = require('../config/config');
+const { RateLimiter } = require('limiter');
 
-// Create a function to get authenticated Gmail client
-function getGmailClient(userAuth = null) {
-  const oauth2Client = new google.auth.OAuth2(
-    config.gmail.clientId,
-    config.gmail.clientSecret,
-    config.gmail.redirectUri
-  );
+// Rate limiter for Gmail API calls (250 quota units per user per second)
+const gmailLimiter = new RateLimiter({ tokensPerInterval: 200, interval: 'second', burst: 50 });
 
-  if (userAuth && userAuth.accessToken && userAuth.refreshToken) {
-    // Use user-specific tokens if available
-    oauth2Client.setCredentials({
-      access_token: userAuth.accessToken,
-      refresh_token: userAuth.refreshToken
-    });
-  } else {
-    // Fallback to global refresh token
-    oauth2Client.setCredentials({ refresh_token: config.gmail.refreshToken });
+// Helper function for rate-limited API calls with exponential backoff
+async function withRateLimit(fn, maxRetries = 3, baseDelay = 1000) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      await gmailLimiter.removeTokens(1);
+      return await fn();
+    } catch (error) {
+      if (error.code === 429 && attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+        console.log(`[gmailService] Rate limit hit, retrying after ${delay}ms... (attempt ${attempt + 1}/${maxRetries + 1})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
   }
-
-  return google.gmail({ version: 'v1', auth: oauth2Client });
 }
 
-// Cache for labels to avoid repeated API calls
-let labelsCache = null;
-let labelsCacheTime = null;
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-
-async function getEmails(userId, maxResults = 50, userAuth = null, pageToken = null) {
+async function getEmails(req, maxResults = 50, pageToken = null) {
   try {
-    const gmail = getGmailClient(userAuth);
+    const gmail = req.gmailClient;
+    const userId = req.userId;
 
     const listParams = {
       userId: 'me',
@@ -41,36 +38,34 @@ async function getEmails(userId, maxResults = 50, userAuth = null, pageToken = n
       listParams.pageToken = pageToken;
     }
 
-    const response = await gmail.users.messages.list(listParams);
+    const response = await withRateLimit(() => gmail.users.messages.list(listParams));
     const messages = response.data.messages || [];
     const emails = [];
 
-    console.log(`   Fetching details for ${messages.length} emails...`);
+    console.log(`Fetching details for ${messages.length} emails for user ${userId}`);
 
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
       try {
-        const email = await gmail.users.messages.get({
+        const email = await withRateLimit(() => gmail.users.messages.get({
           userId: 'me',
           id: message.id,
           format: 'full',
-        });
+        }));
         emails.push(email.data);
 
-        // Small delay between requests to avoid rate limits
         if (i < messages.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       } catch (emailError) {
-        console.log(`   Warning: Could not fetch email ${message.id}: ${emailError.message}`);
+        console.log(`Warning: Could not fetch email ${message.id}: ${emailError.message}`);
       }
     }
 
-    // Return emails with pagination info
     return {
       emails,
       nextPageToken: response.data.nextPageToken,
-      totalEmails: emails.length
+      totalEmails: emails.length,
     };
   } catch (error) {
     console.error('Error fetching emails:', error);
@@ -78,148 +73,97 @@ async function getEmails(userId, maxResults = 50, userAuth = null, pageToken = n
   }
 }
 
-// Function to get all labels with caching
-async function getAllLabels(userAuth = null) {
-  const now = Date.now();
-
-  // Return cached labels if still valid
-  if (labelsCache && labelsCacheTime && (now - labelsCacheTime) < CACHE_DURATION) {
-    return labelsCache;
+async function getAllLabels(authClientOrGmail) {
+  let gmail;
+  if (authClientOrGmail && typeof authClientOrGmail.users === 'object') {
+    // It's already a Gmail API object
+    gmail = authClientOrGmail;
+  } else {
+    // It's an auth client, create Gmail API object
+    gmail = google.gmail({ version: 'v1', auth: authClientOrGmail });
   }
 
   try {
-    const gmail = getGmailClient(userAuth);
-    const response = await gmail.users.labels.list({ userId: 'me' });
-    labelsCache = response.data.labels || [];
-    labelsCacheTime = now;
-    return labelsCache;
+    const response = await withRateLimit(() => gmail.users.labels.list({ userId: 'me' }));
+    return response.data.labels || [];
   } catch (error) {
     console.error('Error fetching labels:', error);
-    throw error;
+    throw error; // Re-throw to allow caller to handle
   }
 }
 
-// Function to sanitize label names for Gmail with Maily prefix
-function sanitizeLabelName(labelName) {
-  if (!labelName || typeof labelName !== 'string') {
-    return 'Maily/Personal';
+
+
+
+
+async function applyLabel(emailId, category, authClientOrGmail) {
+  let gmail;
+  if (authClientOrGmail && typeof authClientOrGmail.users === 'object') {
+    // It's already a Gmail API object from parallelProcessingService
+    gmail = authClientOrGmail;
+  } else {
+    // It's an auth client, create Gmail API object
+    // This path might be less common if called from parallelProcessingService,
+    // which likely already has an initialized gmail object.
+    gmail = google.gmail({ version: 'v1', auth: authClientOrGmail });
   }
 
-  // Remove leading/trailing whitespace
-  let sanitized = labelName.trim();
+  const fullLabelName = `Maily/${category}`; // e.g., "Maily/Work"
+  let labelId = null;
 
-  // Replace invalid characters with underscores
-  // Gmail allows letters, numbers, spaces, and some special characters
-  sanitized = sanitized.replace(/[^\w\s\-\.]/g, '_');
-
-  // Ensure it's not empty after sanitization
-  if (!sanitized) {
-    sanitized = 'Personal';
-  }
-
-  // Add Maily prefix if not already present
-  if (!sanitized.startsWith('Maily/')) {
-    sanitized = `Maily/${sanitized}`;
-  }
-
-  // Gmail label names can't be longer than 100 characters
-  if (sanitized.length > 100) {
-    sanitized = sanitized.substring(0, 100);
-  }
-
-  return sanitized;
-}
-
-// Function to find existing label by name (case-insensitive)
-function findExistingLabel(labels, labelName) {
-  const sanitizedName = sanitizeLabelName(labelName);
-
-  // First try exact match with Maily prefix
-  let existingLabel = labels.find((l) => l.name === sanitizedName);
-
-  // If no exact match, try case-insensitive match
-  if (!existingLabel) {
-    existingLabel = labels.find((l) =>
-      l.name.toLowerCase() === sanitizedName.toLowerCase()
-    );
-  }
-
-  // For nested labels, we prefer creating our own Maily/* labels
-  // rather than using system labels, but we can still fall back to them
-  // if the user specifically wants to use system labels
-
-  return existingLabel;
-}
-
-async function applyLabel(emailId, labelName, userAuth = null) {
   try {
-    // Sanitize the label name
-    const sanitizedLabelName = sanitizeLabelName(labelName);
-    // Get all labels
-    const labels = await getAllLabels(userAuth);
-
-    // Find existing label
-    const existingLabel = findExistingLabel(labels, sanitizedLabelName);
-
-    let labelId;
-    const gmail = getGmailClient(userAuth);
+    // 1. Get all labels
+    const labels = await getAllLabels(gmail); // Use the same gmail instance
+    const existingLabel = labels.find(label => label.name === fullLabelName);
 
     if (existingLabel) {
       labelId = existingLabel.id;
     } else {
-      // Only create new label if it's a user-defined category (not a system label)
+      // 2. Create the label if it doesn't exist
+      console.log(`[gmailService] Label "${fullLabelName}" not found, creating it...`);
       try {
-        const newLabel = await gmail.users.labels.create({
+        const newLabelResponse = await withRateLimit(() => gmail.users.labels.create({
           userId: 'me',
-          requestBody: {
-            name: sanitizedLabelName,
+          resource: {
+            name: fullLabelName,
             labelListVisibility: 'labelShow',
-            messageListVisibility: 'show'
+            messageListVisibility: 'hide', // Use 'hide' instead of 'show' - valid values are 'hide' or 'show'
           },
-        });
-        labelId = newLabel.data.id;
-
-        // Clear cache to include the new label
-        labelsCache = null;
-        labelsCacheTime = null;
+        }));
+        labelId = newLabelResponse.data.id;
+        console.log(`[gmailService] Label "${fullLabelName}" created with ID: ${labelId}`);
       } catch (createError) {
-
-        // If label creation fails, it might already exist - refresh labels and try again
-        labelsCache = null;
-        labelsCacheTime = null;
-        const refreshedLabels = await getAllLabels(userAuth);
-
-        // Try to find the label with exact name match
-        const existingAfterRefresh = refreshedLabels.find(label =>
-          label.name === sanitizedLabelName
-        );
-
-        if (existingAfterRefresh) {
-          labelId = existingAfterRefresh.id;
-        } else {
-          // If we can't create the label, skip this email and log the error
-          console.error(`Unable to create or find label "${sanitizedLabelName}" - skipping email ${emailId}`);
-          throw new Error(`Unable to create or find suitable label for "${labelName}"`);
-        }
+        // Log the detailed error for label creation
+        const errorMessage = createError.errors && createError.errors.length > 0 ? createError.errors[0].message : createError.message;
+        console.error(`[gmailService] Error creating label "${fullLabelName}": ${errorMessage}`, createError);
+        throw new Error(`Failed to create label "${fullLabelName}": ${errorMessage}`);
       }
     }
 
-    // Apply label to email
-    await gmail.users.messages.modify({
-      userId: 'me',
-      id: emailId,
-      requestBody: { addLabelIds: [labelId] },
-    });
-
-
-  } catch (error) {
-    console.error(`Error applying label "${labelName}" to email ${emailId}:`, error.message);
-
-    // Log more details for debugging
-    if (error.response && error.response.data) {
-      console.error('API Error Details:', error.response.data);
+    // 3. Apply the label to the email message
+    if (labelId) {
+      await withRateLimit(() => gmail.users.messages.modify({
+        userId: 'me',
+        id: emailId,
+        resource: {
+          addLabelIds: [labelId],
+          // removeLabelIds: [], // Optional: add if you need to remove other labels
+        },
+      }));
+      // console.log(`[gmailService] Successfully applied label "${fullLabelName}" to email ${emailId}`);
+    } else {
+      // This should ideally not be reached if creation is successful or label exists
+      console.error(`[gmailService] Could not find or create a label ID for "${fullLabelName}" for email ${emailId}.`);
+      throw new Error(`Could not find or create label ID for "${fullLabelName}"`);
     }
-
+  } catch (error) {
+    // Log and re-throw to be caught by the calling function in parallelProcessingService.js
+    // The error message might already be detailed from label creation step
+    const message = error.message || 'Unknown error in applyLabel';
+    console.error(`[gmailService] Error applying label "${fullLabelName}" to email ${emailId}: ${message}`);
+    if (!error.alreadyLogged) { // Avoid double logging if error came from createLabel
+      error.alreadyLogged = true;
+    }
     throw error;
   }
 }
