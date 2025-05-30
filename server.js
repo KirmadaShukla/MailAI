@@ -7,7 +7,6 @@ const config = require('./config/config');
 // Import routes
 const processingRoutes = require('./routes/processing');
 const authRoutes = require('./routes/auth');
-const emailRoutes = require('./routes/email');
 
 const app = express();
 
@@ -45,7 +44,6 @@ app.use((req, res, next) => {
 // Routes
 app.use('/api', processingRoutes);
 app.use('/api', authRoutes);
-app.use('/api/email', emailRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -62,21 +60,6 @@ app.get('/health', (req, res) => {
       'No Queue System - Pure API Control',
       'Organized Modular Architecture'
     ],
-    endpoints: {
-      'GET /api/auth/url': 'Get Gmail OAuth authentication URL',
-      'POST /api/auth/callback': 'Complete OAuth authentication',
-      'GET /api/auth/status/:userId': 'Check user authentication status',
-      'DELETE /api/auth/revoke/:userId': 'Revoke user authentication',
-      'POST /api/process': 'Start parallel email processing (requires auth)',
-      'GET /api/status': 'Get real-time processing status (requires auth)',
-      'GET /api/logs': 'View processing logs (requires auth)',
-      'GET /api/labels': 'Get Gmail labels and statistics (requires auth)',
-      'GET /api/stats': 'Get comprehensive statistics (requires auth)',
-      'POST /api/stop': 'Stop current processing (requires auth)',
-      'GET /api/email/labels': 'Get user Gmail labels (requires auth)',
-      'POST /api/email/categorize': 'Queue email categorization (requires auth)',
-      'POST /api/email/categories': 'Add custom category (requires auth)'
-    }
   });
 });
 
@@ -88,7 +71,6 @@ app.get('/', (req, res) => {
     version: '2.0.0',
     documentation: {
       health: 'GET /health',
-      api: 'All endpoints under /api/*'
     }
   });
 });
@@ -150,7 +132,7 @@ async function startServer() {
     console.log('🚀 Maily Multi-User Email Processing API Server');
     console.log(`📡 Running on port ${PORT}`);
     console.log(`📊 Health check: http://localhost:${PORT}/health`);
-    console.log(`🔐 Authentication: GET http://localhost:${PORT}/api/auth/url`);
+    console.log(`🔐 Authentication: GET http://localhost:${PORT}/api/auth/gmail/?userId=your-email`);
     console.log(`📧 Process emails: POST http://localhost:${PORT}/api/process`);
     console.log(`📈 Check status: GET http://localhost:${PORT}/api/status`);
     console.log('⚡ MULTI-USER ARCHITECTURE');

@@ -4,7 +4,9 @@ const {
   processEmailsParallel,
   getProcessingStatus,
   resetProcessingStatus,
-  addLog
+  addLog,
+  debugProcessedEmails,
+  cleanupDuplicateLabels
 } = require('../services/parallelProcessingService');
 const { getAllLabels } = require('../services/gmailService');
 const authMiddleware = require('../middleware/auth');
@@ -143,12 +145,55 @@ router.get('/logs', authMiddleware, (req, res) => {
   }
 });
 
-// GET /api/labels - Get current Gmail labels
-router.get('/labels', authMiddleware, async (req, res) => {
+
+// POST /api/stop - Stop current processing (if needed)
+router.post('/stop', authMiddleware, (req, res) => {
   try {
+    const currentStatus = getProcessingStatus(); // Get the live status object
+
+    if (!currentStatus.isProcessing) {
+      return res.status(400).json({
+        success: false,
+        error: 'No processing is currently running'
+      });
+    }
+
+    addLog('🛑 User requested STOP via API. Halting processing...');
+    currentStatus.isProcessing = false;
+    currentStatus.userRequestedStop = true; // Set the new flag
+
+    res.json({
+      success: true,
+      message: 'Stop signal received. Processing will halt. Already active operations might complete.',
+      data: {
+        note: 'Processing will stop. Any operations already sent to external APIs (like Gmail or Gemini) might still complete.'
+      }
+    });
+
+  } catch (error) {
+    console.error('[API /stop] Error processing stop request:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// GET /api/debug - Debug processed emails status
+router.get('/debug', authMiddleware, async (req, res) => {
+  try {
+    const {userId} = req.query;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'userId parameter is required'
+      });
+    }
+
     // Get user from database to access tokens
     const User = require('../models/User');
-    const user = await User.findOne({ userId: req.userId });
+    const user = await User.findOne({ userId });
     if (!user || !user.gmailTokens) {
       return res.status(401).json({
         success: false,
@@ -160,30 +205,15 @@ router.get('/labels', authMiddleware, async (req, res) => {
       accessToken: user.gmailTokens.accessToken,
       refreshToken: user.getDecryptedRefreshToken()
     };
-    const labels = await getAllLabels(req);
-    const mailyLabels = labels.filter(label => label.name.startsWith('Maily/'));
 
-    // Calculate total emails organized
-    const totalOrganized = mailyLabels.reduce((sum, label) =>
-      sum + (label.messagesTotal || 0), 0);
+    const debugInfo = await debugProcessedEmails(userAuth);
 
     res.json({
       success: true,
-      data: {
-        totalLabels: labels.length,
-        mailyLabels: mailyLabels.length,
-        totalOrganizedEmails: totalOrganized,
-        labels: mailyLabels
-          .sort((a, b) => (b.messagesTotal || 0) - (a.messagesTotal || 0))
-          .map(label => ({
-            id: label.id,
-            name: label.name,
-            messagesTotal: label.messagesTotal || 0,
-            messagesUnread: label.messagesUnread || 0,
-            category: label.name.replace('Maily/', '')
-          }))
-      }
+      message: 'Debug information retrieved successfully',
+      data: debugInfo
     });
+
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -192,48 +222,21 @@ router.get('/labels', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/stop - Stop current processing (if needed)
-router.post('/stop', authMiddleware, (req, res) => {
+// POST /api/cleanup - Clean up duplicate Maily/ labels
+router.post('/cleanup', authMiddleware, async (req, res) => {
   try {
-    const processingStatus = getProcessingStatus();
+    const {userId} = req.body;
 
-    if (!processingStatus.isProcessing) {
+    if (!userId) {
       return res.status(400).json({
         success: false,
-        error: 'No processing is currently running'
+        error: 'userId parameter is required'
       });
     }
 
-    // Note: This is a soft stop - batches already started will continue
-    addLog('🛑 Stop request received via API');
-    processingStatus.isProcessing = false;
-
-    res.json({
-      success: true,
-      message: 'Stop signal sent. Current batches will complete.',
-      data: {
-        processedEmails: processingStatus.processedEmails,
-        totalEmails: processingStatus.totalEmails,
-        note: 'Parallel batches already started will continue to completion'
-      }
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// GET /api/stats - Get processing statistics
-router.get('/stats', authMiddleware, async (req, res) => {
-  try {
-    const processingStatus = getProcessingStatus();
-
     // Get user from database to access tokens
     const User = require('../models/User');
-    const user = await User.findOne({ userId: req.userId });
+    const user = await User.findOne({ userId });
     if (!user || !user.gmailTokens) {
       return res.status(401).json({
         success: false,
@@ -241,43 +244,17 @@ router.get('/stats', authMiddleware, async (req, res) => {
       });
     }
 
-    const labels = await getAllLabels(req);
-    const mailyLabels = labels.filter(label => label.name.startsWith('Maily/'));
+    const userAuth = {
+      accessToken: user.gmailTokens.accessToken,
+      refreshToken: user.getDecryptedRefreshToken()
+    };
 
-    const totalOrganized = mailyLabels.reduce((sum, label) =>
-      sum + (label.messagesTotal || 0), 0);
-
-    const categoryStats = mailyLabels.map(label => ({
-      category: label.name.replace('Maily/', ''),
-      count: label.messagesTotal || 0,
-      percentage: totalOrganized > 0 ?
-        Math.round(((label.messagesTotal || 0) / totalOrganized) * 100) : 0
-    })).sort((a, b) => b.count - a.count);
+    const result = await cleanupDuplicateLabels(userAuth);
 
     res.json({
       success: true,
-      data: {
-        processing: {
-          isActive: processingStatus.isProcessing,
-          totalEmails: processingStatus.totalEmails,
-          processedEmails: processingStatus.processedEmails,
-          errors: processingStatus.errors,
-          currentBatch: processingStatus.currentBatch,
-          totalBatches: processingStatus.totalBatches
-        },
-        organization: {
-          totalOrganizedEmails: totalOrganized,
-          totalCategories: mailyLabels.length,
-          categoryBreakdown: categoryStats
-        },
-        performance: {
-          startTime: processingStatus.startTime,
-          elapsedSeconds: processingStatus.startTime ?
-            Math.round((Date.now() - processingStatus.startTime) / 1000) : 0,
-          emailsPerMinute: processingStatus.startTime && processingStatus.processedEmails > 0 ?
-            Math.round(processingStatus.processedEmails / ((Date.now() - processingStatus.startTime) / 1000) * 60) : 0
-        }
-      }
+      message: 'Duplicate labels cleanup completed',
+      data: result
     });
 
   } catch (error) {

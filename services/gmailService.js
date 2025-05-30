@@ -73,38 +73,41 @@ async function getEmails(req, maxResults = 50, pageToken = null) {
   }
 }
 
-async function getAllLabels(authClientOrGmail) {
+async function getAllLabels(authClientOrGmail, context = 'DEFAULT') {
   let gmail;
-  if (authClientOrGmail && typeof authClientOrGmail.users === 'object') {
+  if (authClientOrGmail && typeof authClientOrGmail.users === 'object' && typeof authClientOrGmail.users.labels === 'object' && typeof authClientOrGmail.users.labels.list === 'function') {
     // It's already a Gmail API object
+    console.log(`[gmailService - getAllLabels - ${context}] Using pre-initialized gmail client. Type: ${typeof authClientOrGmail}`);
     gmail = authClientOrGmail;
   } else {
-    // It's an auth client, create Gmail API object
+    // It's an auth client or something else, create Gmail API object
+    console.log(`[gmailService - getAllLabels - ${context}] authClientOrGmail is NOT a pre-initialized gmail client. Type: ${typeof authClientOrGmail}. Value:`, authClientOrGmail);
+    // THE ERROR IS LIKELY HERE if authClientOrGmail is not a valid auth client instance for google.gmail
     gmail = google.gmail({ version: 'v1', auth: authClientOrGmail });
   }
 
   try {
+    console.log(`[gmailService - getAllLabels - ${context}] Attempting to list labels...`);
     const response = await withRateLimit(() => gmail.users.labels.list({ userId: 'me' }));
+    console.log(`[gmailService - getAllLabels - ${context}] Labels listed successfully.`);
     return response.data.labels || [];
   } catch (error) {
-    console.error('Error fetching labels:', error);
+    console.error(`[gmailService - getAllLabels - ${context}] Error fetching labels. Auth object type was ${typeof authClientOrGmail}. Error:`, error);
     throw error; // Re-throw to allow caller to handle
   }
 }
 
-
-
-
-
 async function applyLabel(emailId, category, authClientOrGmail) {
   let gmail;
-  if (authClientOrGmail && typeof authClientOrGmail.users === 'object') {
+  // Ensure context is passed if applyLabel calls getAllLabels
+  const callContext = `applyLabel-${category}`; 
+  if (authClientOrGmail && typeof authClientOrGmail.users === 'object' && typeof authClientOrGmail.users.labels === 'object' && typeof authClientOrGmail.users.labels.list === 'function') {
     // It's already a Gmail API object from parallelProcessingService
+    console.log(`[gmailService - applyLabel] Using pre-initialized gmail client for applyLabel.`);
     gmail = authClientOrGmail;
   } else {
     // It's an auth client, create Gmail API object
-    // This path might be less common if called from parallelProcessingService,
-    // which likely already has an initialized gmail object.
+    console.log(`[gmailService - applyLabel] Initializing new gmail client for applyLabel. authClientOrGmail type: ${typeof authClientOrGmail}. Value:`, authClientOrGmail);
     gmail = google.gmail({ version: 'v1', auth: authClientOrGmail });
   }
 
@@ -113,7 +116,7 @@ async function applyLabel(emailId, category, authClientOrGmail) {
 
   try {
     // 1. Get all labels
-    const labels = await getAllLabels(gmail); // Use the same gmail instance
+    const labels = await getAllLabels(gmail, callContext); // Pass the 'gmail' instance and context
     const existingLabel = labels.find(label => label.name === fullLabelName);
 
     if (existingLabel) {
