@@ -1,58 +1,3 @@
-<<<<<<< Updated upstream
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T07:50:42.101Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T07:50:42.111Z"}
-{"level":"info","message":"GET /health - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T07:50:43.160Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T07:53:39.412Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T07:53:39.417Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T07:53:45.108Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T07:53:45.113Z"}
-{"level":"info","message":"GET /api/auth/gmail/ - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T07:54:20.686Z"}
-{"level":"info","message":"GET /api/auth/gmail/ - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T07:57:01.813Z"}
-{"level":"info","message":"GET /api/auth/callback - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T07:57:18.911Z"}
-{"level":"info","message":"GET /favicon.ico - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T07:57:19.007Z"}
-{"level":"info","message":"POST /api/auth/gmail/callback - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T07:58:06.396Z"}
-{"level":"info","message":"POST /api/process - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T07:58:12.405Z"}
-{"level":"info","message":"POST /api/process - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T07:59:58.742Z"}
-{"level":"info","message":"POST /api/process - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T08:02:47.568Z"}
-{"level":"info","message":"POST /api/process - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T08:07:42.221Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:09:32.379Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:09:32.389Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:09:53.124Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:09:53.130Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:10:21.888Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:10:21.893Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:10:32.861Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:10:32.866Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:10:46.434Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:10:46.439Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:11:01.739Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:11:01.745Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:11:22.689Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:11:22.694Z"}
-{"level":"info","message":"GET /api/debug - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T08:12:48.887Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:14:14.186Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:14:14.191Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:14:35.396Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:14:35.401Z"}
-{"level":"info","message":"GET /api/debug - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T08:14:55.999Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:15:21.556Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:15:21.561Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:17:17.848Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:17:17.854Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:17:48.294Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:17:48.299Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:17:59.917Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:17:59.926Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:18:13.254Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:18:13.259Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:18:39.200Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:18:39.205Z"}
-{"level":"info","message":"POST /api/cleanup - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T08:19:31.742Z"}
-{"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-05-30T08:22:25.665Z"}
-{"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-30T08:22:25.670Z"}
-{"level":"info","message":"POST /api/process - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T08:22:34.609Z"}
-{"level":"info","message":"POST /api/process - ::1","service":"maily-parallel-api","timestamp":"2025-05-30T08:27:06.803Z"}
-=======
 {"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-05-24T14:15:50.216Z"}
 {"level":"info","message":"GET /api/stats/stats - ::1","service":"maily-parallel-api","timestamp":"2025-05-24T14:15:52.555Z"}
 {"level":"info","message":"GET /api/stats/ - ::1","service":"maily-parallel-api","timestamp":"2025-05-24T14:15:58.180Z"}
@@ -73,7 +18,6 @@
 {"level":"info","message":"GET /api/process - ::ffff:127.0.0.1","service":"maily-parallel-api","timestamp":"2025-05-25T17:38:51.614Z"}
 {"level":"info","message":"POST /api/process - ::ffff:127.0.0.1","service":"maily-parallel-api","timestamp":"2025-05-25T17:39:02.584Z"}
 {"level":"info","message":"POST /api/stop - ::ffff:127.0.0.1","service":"maily-parallel-api","timestamp":"2025-05-25T17:39:24.687Z"}
->>>>>>> Stashed changes
 {"level":"info","message":"MongoDB connection established","service":"maily-parallel-api","timestamp":"2025-06-01T00:39:35.262Z"}
 {"level":"info","message":"Maily API Server started on port 3002","service":"maily-parallel-api","timestamp":"2025-06-01T00:39:35.269Z"}
 {"level":"info","message":"GET /health - ::ffff:127.0.0.1","service":"maily-parallel-api","timestamp":"2025-06-01T00:42:06.342Z"}
