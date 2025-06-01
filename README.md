@@ -1,6 +1,7 @@
 # 🚀 MailAI - AI-Powered Email Categorization System
 
 ## 📋 Project Overview
+
 **MailAI** is a production-ready, high-performance email categorization and labeling system that uses Google's Gemini 2.0 Flash AI and parallel processing to intelligently organize Gmail emails with hierarchical labels. The system features multi-user authentication, real-time monitoring, and enterprise-grade error handling.
 
 ---
@@ -8,6 +9,7 @@
 ## 🏗️ **CLEAN ORGANIZED ARCHITECTURE**
 
 ### **📁 Project Structure**
+
 ```
 MailAI/
 ├── server.js                          # Main Express API server
@@ -40,6 +42,7 @@ MailAI/
 ## ⚡ **CORE FEATURES & CAPABILITIES**
 
 ### **🎯 AI-Powered Categorization**
+
 - **✅ Google Gemini 2.0 Flash**: Latest AI model for intelligent email categorization
 - **✅ Hierarchical Labels**: Organized "Maily/" prefix structure for better organization
 - **✅ 12 Categories**: Work, Personal, Promotions, Finance, Important, Transactions, etc.
@@ -47,6 +50,7 @@ MailAI/
 - **✅ Smart Fallback**: Intelligent categorization with Personal as fallback
 
 ### **🚀 High-Performance Processing**
+
 - **✅ Parallel Batch Processing**: Processes multiple email batches simultaneously
 - **✅ Optimized Batch Size**: 200 emails per batch for maximum API efficiency
 - **✅ Rate Limit Management**: Intelligent handling of Gmail API limits with exponential backoff
@@ -55,6 +59,7 @@ MailAI/
 - **✅ Multi-User Support**: Individual user authentication and token management
 
 ### **📊 Performance Metrics**
+
 - **Speed**: ~119 emails/minute (proven performance)
 - **Efficiency**: 3x faster than sequential processing
 - **Scalability**: Handles 1000+ emails efficiently
@@ -66,6 +71,7 @@ MailAI/
 ## 🎯 **WHAT MAKES THIS SPECIAL**
 
 ### **🔥 Key Innovations**
+
 - **Multi-User Architecture**: Individual user authentication with encrypted token storage
 - **TRUE Parallel Processing**: All batches process simultaneously (not sequential)
 - **Intelligent Rate Limiting**: Dynamic backoff with quota error detection
@@ -74,6 +80,7 @@ MailAI/
 - **Zero Queue Dependencies**: Pure API-driven processing without background queues
 
 ### **🚀 Performance Advantages**
+
 - **10x Faster**: Parallel processing vs traditional sequential methods
 - **Smart Batching**: 200 emails per batch optimized for API efficiency
 - **Concurrent Processing**: 10 batches running simultaneously
@@ -85,6 +92,7 @@ MailAI/
 ## 📊 **PROCESSING FLOW**
 
 ### **1. User Authentication** (OAuth2)
+
 ```
 🔐 User initiates Gmail OAuth flow
 🎫 Secure token storage with encryption
@@ -92,6 +100,7 @@ MailAI/
 ```
 
 ### **2. Initialization** (5-10 seconds)
+
 ```
 📊 Finding already processed emails with Maily/ labels
 📧 Fetching all email IDs from Gmail API
@@ -100,6 +109,7 @@ MailAI/
 ```
 
 ### **3. Parallel Processing** (Main Phase)
+
 ```
 ⚡ Processing ALL batches in PARALLEL!
 🤖 Batch 1: Fetching → Gemini AI → Labeling (200 emails)
@@ -109,6 +119,7 @@ MailAI/
 ```
 
 ### **4. Completion & Monitoring**
+
 ```
 🎉 PARALLEL PROCESSING COMPLETE!
 ✅ Successfully processed: X emails
@@ -122,6 +133,7 @@ MailAI/
 ## 🔧 **TECHNICAL SPECIFICATIONS**
 
 ### **Core Dependencies**
+
 - **Express.js 5.1.0**: Modern web server framework
 - **Google APIs 149.0.0**: Gmail integration
 - **Google Generative AI 0.24.1**: Gemini 2.0 Flash
@@ -130,6 +142,7 @@ MailAI/
 - **Bull 4.16.5**: Queue management (optional)
 
 ### **Configuration**
+
 - **Port**: 3003 (configurable via PORT env var)
 - **Batch Size**: 200 emails per batch
 - **Concurrent Batches**: 10 batches simultaneously
@@ -138,6 +151,7 @@ MailAI/
 - **Retry Attempts**: 3 attempts with exponential backoff
 
 ### **AI Model Configuration**
+
 - **Model**: Gemini 2.0 Flash Experimental
 - **Temperature**: 0.03 (highly consistent results)
 - **Max Tokens**: 8192
@@ -149,12 +163,14 @@ MailAI/
 ## 📈 **API ENDPOINTS**
 
 ### **Authentication**
+
 ```
 GET  /api/auth/gmail/?userId={email}     # Initiate Gmail OAuth
 GET  /api/auth/callback                  # OAuth callback handler
 ```
 
 ### **Email Processing**
+
 ```
 POST /api/process                        # Start email processing
 GET  /api/status                         # Get processing status
@@ -163,6 +179,7 @@ POST /api/stop                          # Stop current processing
 ```
 
 ### **System**
+
 ```
 GET  /health                            # Health check
 GET  /                                  # API information
@@ -173,31 +190,36 @@ GET  /                                  # API information
 ## 🚀 **GETTING STARTED**
 
 ### **Prerequisites**
+
 - Node.js 16+ installed
 - MongoDB database (optional)
 - Gmail API credentials
 - Gemini API key
 
 ### **Installation**
+
 1. **Clone Repository**
+
    ```bash
    git clone <repository-url>
    cd MailAI
    ```
 
 2. **Install Dependencies**
+
    ```bash
    npm install
    ```
 
 3. **Environment Configuration**
    Create `.env` file:
+
    ```env
    PORT=3003
    MONGO_URI=mongodb://localhost:27017/mailai
-   GMAIL_CLIENT_ID=your_gmail_client_id
-   GMAIL_CLIENT_SECRET=your_gmail_client_secret
-   GMAIL_REDIRECT_URI=http://localhost:3003/api/auth/callback
+   GOOGLE_OAUTH_CLIENT_ID=your_gmail_client_id
+   GOOGLE_OAUTH_CLIENT_SECRET=your_gmail_client_secret
+   GOOGLE_OAUTH_REDIRECT_URI=http://localhost:3003/api/auth/callback
    GEMINI_API_KEY=your_gemini_api_key
    ```
 
@@ -208,6 +230,7 @@ GET  /                                  # API information
    ```
 
 ### **Usage Flow**
+
 1. **Authenticate**: Visit `/api/auth/gmail/?userId=your-email@gmail.com`
 2. **Complete OAuth**: Follow Gmail authorization flow
 3. **Start Processing**: POST to `/api/process` with `{"userId": "your-email@gmail.com"}`
@@ -219,13 +242,16 @@ GET  /                                  # API information
 ## 🧪 **TESTING**
 
 ### **Run Tests**
+
 ```bash
 npm test                    # Run all tests
 npm test -- --grep "gemini" # Run specific tests
 ```
 
 ### **API Testing**
+
 Use tools like Postman or curl to test endpoints:
+
 ```bash
 # Health check
 curl http://localhost:3003/health
@@ -244,11 +270,13 @@ curl http://localhost:3003/api/status
 ## 📊 **MONITORING & LOGS**
 
 ### **Real-time Monitoring**
+
 - **Live Status**: GET `/api/status` for current progress
 - **Detailed Logs**: GET `/api/logs` for processing history
 - **Performance Metrics**: Processing rate, batch completion, errors
 
 ### **Log Files**
+
 - `logs/combined.log`: All application logs
 - `logs/error.log`: Error-specific logs
 - Console output: Real-time processing updates
