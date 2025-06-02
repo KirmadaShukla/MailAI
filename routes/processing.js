@@ -7,14 +7,23 @@ const {
   addLog,
   debugProcessedEmails,
   cleanupDuplicateLabels,
+  getAllActiveSessions,
 } = require("../services/parallelProcessingService");
-const { getAllLabels } = require("../services/gmailService");
+
 const authMiddleware = require("../middleware/auth");
 
 // GET /api/status - Get current processing status
 router.get("/status", authMiddleware, (req, res) => {
   try {
-    const processingStatus = getProcessingStatus();
+    const userId = req.headers["x-user-id"];
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    const processingStatus = getProcessingStatus(userId);
     const currentTime = Date.now();
     const elapsedTime = processingStatus.startTime
       ? Math.round((currentTime - processingStatus.startTime) / 1000)
@@ -73,8 +82,16 @@ router.get("/status", authMiddleware, (req, res) => {
 // POST /api/process - Start email processing
 router.get("/process", authMiddleware, async (req, res) => {
   try {
-    const processingStatus = getProcessingStatus();
     const userId = req.headers["x-user-id"];
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    const processingStatus = getProcessingStatus(userId);
+
     // Get user from database to access tokens
     const User = require("../models/User");
     const user = await User.findOne({ userId });
@@ -93,7 +110,7 @@ router.get("/process", authMiddleware, async (req, res) => {
     if (processingStatus.isProcessing) {
       return res.status(400).json({
         success: false,
-        error: "Email processing is already in progress",
+        error: "Email processing is already in progress for this user",
         data: {
           currentProgress: Math.round(
             (processingStatus.processedEmails / processingStatus.totalEmails) *
@@ -106,15 +123,16 @@ router.get("/process", authMiddleware, async (req, res) => {
     }
 
     // Reset status before starting
-    resetProcessingStatus();
+    resetProcessingStatus(userId);
     addLog(
       `🎯 API request received to start parallel processing for user: ${userId}`,
+      userId
     );
 
     // Start processing in background with user authentication
-    processEmailsParallel(userAuth).catch((error) => {
-      addLog(`❌ Processing failed: ${error.message}`);
-      const status = getProcessingStatus();
+    processEmailsParallel(userAuth, userId).catch((error) => {
+      addLog(`❌ Processing failed: ${error.message}`, userId);
+      const status = getProcessingStatus(userId);
       status.isProcessing = false;
     });
 
@@ -143,7 +161,15 @@ router.get("/process", authMiddleware, async (req, res) => {
 // GET /api/logs - Get all processing logs
 router.get("/logs", authMiddleware, (req, res) => {
   try {
-    const processingStatus = getProcessingStatus();
+    const userId = req.headers["x-user-id"];
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    const processingStatus = getProcessingStatus(userId);
 
     res.json({
       success: true,
@@ -168,16 +194,24 @@ router.get("/logs", authMiddleware, (req, res) => {
 // POST /api/stop - Stop current processing (if needed)
 router.post("/stop", authMiddleware, (req, res) => {
   try {
-    const currentStatus = getProcessingStatus(); // Get the live status object
+    const userId = req.headers["x-user-id"];
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    const currentStatus = getProcessingStatus(userId); // Get the live status object
 
     if (!currentStatus.isProcessing) {
       return res.status(400).json({
         success: false,
-        error: "No processing is currently running",
+        error: "No processing is currently running for this user",
       });
     }
 
-    addLog("🛑 User requested STOP via API. Halting processing...");
+    addLog("🛑 User requested STOP via API. Halting processing...", userId);
     currentStatus.isProcessing = false;
     currentStatus.userRequestedStop = true; // Set the new flag
 
@@ -273,6 +307,31 @@ router.post("/cleanup", authMiddleware, async (req, res) => {
       success: true,
       message: "Duplicate labels cleanup completed",
       data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// GET /api/sessions - Get all active processing sessions (admin/debug endpoint)
+router.get("/sessions", authMiddleware, (req, res) => {
+  try {
+    const activeSessions = getAllActiveSessions();
+
+    res.json({
+      success: true,
+      message: "Active processing sessions retrieved successfully",
+      data: {
+        totalActiveSessions: activeSessions.length,
+        sessions: activeSessions,
+        serverInfo: {
+          timestamp: new Date().toISOString(),
+          note: "This endpoint shows all users currently processing emails"
+        }
+      },
     });
   } catch (error) {
     res.status(500).json({
